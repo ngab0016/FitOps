@@ -1,0 +1,135 @@
+# ── FitOps API Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fitops-api
+  labels:
+    app: fitops-api
+    component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fitops-api
+  template:
+    metadata:
+      labels:
+        app: fitops-api
+    spec:
+      containers:
+        - name: fitops-api
+          image: fitopsacr.azurecr.io/fitops-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: fitops-config
+                  key: environment
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fitops-api
+spec:
+  selector:
+    app: fitops-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# ── FitOps Dashboard Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fitops-dashboard
+  labels:
+    app: fitops-dashboard
+    component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fitops-dashboard
+  template:
+    metadata:
+      labels:
+        app: fitops-dashboard
+    spec:
+      containers:
+        - name: fitops-dashboard
+          image: fitopsacr.azurecr.io/fitops-dashboard:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fitops-dashboard
+spec:
+  selector:
+    app: fitops-dashboard
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fitops-config
+data:
+  environment: "dev"
+  api_port: "8000"
+
+---
+# ── Horizontal Pod Autoscaler ─────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fitops-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fitops-api
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

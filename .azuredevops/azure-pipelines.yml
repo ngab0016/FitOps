@@ -1,0 +1,196 @@
+# FitOps: Azure DevOps CI/CD Pipeline
+# Stages: Test → Build → Push to ACR → Deploy to AKS
+# Unique step: queries FitOps API for training load and adjusts replicas before deploy
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  - group: fitops-secrets           # Stored in Azure DevOps & never in git
+  - name: imageRepository
+    value: fitops
+  - name: containerRegistry
+    value: $(ACR_LOGIN_SERVER)
+  - name: aksClusterName
+    value: fitops-aks-dev
+  - name: aksResourceGroup
+    value: fitops-rg-dev
+  - name: k8sNamespace
+    value: default
+
+stages:
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Stage 1: Test
+# Runs on every push and every pull request
+# ──────────────────────────────────────────────────────────────────────────────
+- stage: Test
+  displayName: Run Tests
+  jobs:
+
+    - job: BackendTests
+      displayName: FastAPI Backend Tests
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: "3.12"
+          displayName: Set Python version
+
+        - script: |
+            cd backend
+            pip install -r requirements.txt
+            pytest tests/ -v --tb=short --junitxml=test-results.xml
+          displayName: Run pytest
+
+        - task: PublishTestResults@2
+          inputs:
+            testResultsFormat: JUnit
+            testResultsFiles: backend/test-results.xml
+          condition: always()
+          displayName: Publish test results
+
+    - job: FrontendBuild
+      displayName: React Frontend Build Check
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: "20.x"
+          displayName: Set Node version
+
+        - script: |
+            cd frontend
+            npm ci
+            npm run build
+          displayName: npm build
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Stage 2: Build & Push to ACR
+# Only runs after tests pass
+# ──────────────────────────────────────────────────────────────────────────────
+- stage: Build
+  displayName: Build & Push Images
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+
+    - job: BuildAndPush
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - task: Docker@2
+          displayName: Build & Push API image
+          inputs:
+            command: buildAndPush
+            repository: $(imageRepository)-api
+            dockerfile: backend/Dockerfile
+            containerRegistry: $(ACR_SERVICE_CONNECTION)
+            tags: |
+              $(Build.BuildId)
+              latest
+
+        - task: Docker@2
+          displayName: Build & Push Dashboard image
+          inputs:
+            command: buildAndPush
+            repository: $(imageRepository)-dashboard
+            dockerfile: frontend/Dockerfile
+            containerRegistry: $(ACR_SERVICE_CONNECTION)
+            tags: |
+              $(Build.BuildId)
+              latest
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Stage 3: Deploy to AKS
+# Only runs on main branch after build succeeds
+# Unique step: queries FitOps API → patches HPA min replicas before deploying
+# ──────────────────────────────────────────────────────────────────────────────
+- stage: Deploy
+  displayName: Deploy to AKS
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+
+    - deployment: DeployToAKS
+      displayName: Deploy FitOps to AKS
+      pool:
+        vmImage: ubuntu-latest
+      environment: fitops-dev
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: AzureCLI@2
+                displayName: Get AKS credentials
+                inputs:
+                  azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    az aks get-credentials \
+                      --resource-group $(aksResourceGroup) \
+                      --name $(aksClusterName) \
+                      --overwrite-existing
+
+              # ── THE UNIQUE FITOPS STEP ──────────────────────────────────────
+              # Query the API → get training load → patch HPA before deploying
+              - script: |
+                  echo "Querying FitOps API for scale recommendation..."
+
+                  SCALE_JSON=$(curl -sf $(FITOPS_API_URL)/metrics/scale-recommendation \
+                    || echo '{"replicas":2,"reason":"API unreachable","training_load":0}')
+
+                  REPLICAS=$(echo $SCALE_JSON | python3 -c \
+                    "import sys,json; print(json.load(sys.stdin)['replicas'])")
+
+                  REASON=$(echo $SCALE_JSON | python3 -c \
+                    "import sys,json; print(json.load(sys.stdin)['reason'])")
+
+                  ATL=$(echo $SCALE_JSON | python3 -c \
+                    "import sys,json; print(json.load(sys.stdin)['training_load'])")
+
+                  echo "Training Load (ATL): $ATL"
+                  echo "Recommended replicas: $REPLICAS"
+                  echo "Reason: $REASON"
+
+                  # Patch the HPA minimum to match training load recommendation
+                  kubectl patch hpa fitops-api-hpa \
+                    --patch "{\"spec\":{\"minReplicas\":$REPLICAS}}"
+
+                  echo "HPA patched — minimum replicas set to $REPLICAS"
+
+                  # Pass replica count to next steps as a pipeline variable
+                  echo "##vso[task.setvariable variable=recommendedReplicas]$REPLICAS"
+                displayName: "⬡ FitOps Scale Decision"
+
+              - task: KubernetesManifest@1
+                displayName: Deploy to AKS
+                inputs:
+                  action: deploy
+                  kubernetesServiceConnection: $(AKS_SERVICE_CONNECTION)
+                  namespace: $(k8sNamespace)
+                  manifests: k8s/manifests.yaml
+                  containers: |
+                    $(containerRegistry)/$(imageRepository)-api:$(Build.BuildId)
+                    $(containerRegistry)/$(imageRepository)-dashboard:$(Build.BuildId)
+
+              - script: |
+                  echo "Verifying rollout..."
+                  kubectl rollout status deployment/fitops-api --timeout=120s
+                  kubectl rollout status deployment/fitops-dashboard --timeout=120s
+                  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                  echo "Deployment complete"
+                  echo "Replicas set to: $(recommendedReplicas)"
+                  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                displayName: Verify rollout
