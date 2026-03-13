@@ -28,13 +28,13 @@ Log your workouts → ATL is computed → infrastructure scales to match. Proact
 Successfully deployed to Azure Kubernetes Service. The screenshots below show a real AKS cluster with 4 pods triggered by an overreach training week.
 
 
-**Overreach week — ATL: 370.4 → 4 pods, OVERREACH ALERT:**
+**Overreach week, ATL: 370.4 → 4 pods, OVERREACH ALERT:**
 
-![alt text](<Screenshot 2026-03-13 at 18.37.35.png>)
+![FitOps Dashboard](screenshot-overreach.png)
 
-**Workout history — color-coded by intensity:**
+**Workout history, color-coded by intensity:**
 
-![alt text](<Screenshot 2026-03-13 at 18.37.48.png>)
+![FitOps Workouts](screenshot-workouts.png)
 
 ---
 
