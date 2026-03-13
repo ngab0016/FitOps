@@ -2,7 +2,7 @@
 
 > I love fitness & cloud engineering...Essentially I built a platform that uses athlete training load to make Azure scaling decisions. The harder you train, the more Kubernetes pods you get. Rest days scale everything back down because infrastructure should work as hard as you do.
 
-This is a passion project built for fun touching every layer of the stack: a Python API, a React dashboard, Docker containers, Kubernetes on AKS, Bicep infrastructure as code, PowerShell provisioning scripts and an Azure DevOps CI/CD pipeline.
+This is a passion project built for fun, touching every layer of the stack: a Python API, a React dashboard, Docker containers, Kubernetes on AKS, Bicep infrastructure as code, PowerShell provisioning scripts, and an Azure DevOps CI/CD pipeline.
 
 ---
 
@@ -19,7 +19,22 @@ FitOps uses that same metric to make infrastructure decisions:
 | ATL 60–90 | Peak week | 3 pods |
 | ATL > 90 | Overreach ⚠ | 4 pods + alert |
 
-Log your workouts → ATL is computed → infrastructure scales to match. Proactive scaling driven by real data, not just CPU spikes.
+Log your workouts → ATL is computed → infrastructure scales to match. Proactive scaling driven by real data, not reactive CPU spikes.
+
+---
+
+## Live on Azure
+
+Successfully deployed to Azure Kubernetes Service. The screenshots below show a real AKS cluster with 4 pods triggered by an overreach training week.
+
+
+**Overreach week — ATL: 370.4 → 4 pods, OVERREACH ALERT:**
+
+![alt text](<Screenshot 2026-03-13 at 18.37.35.png>)
+
+**Workout history — color-coded by intensity:**
+
+![alt text](<Screenshot 2026-03-13 at 18.37.48.png>)
 
 ---
 
@@ -87,8 +102,8 @@ fitops/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── pytest.ini
-│   └── src/
-│       └── main.py                 # FastAPI app + ATL algorithm
+│   ├── src/
+│   │   └── main.py                 # FastAPI app + ATL algorithm
 │   └── tests/
 │       └── test_api.py             # 19 passing tests (unit + integration)
 └── frontend/
@@ -131,19 +146,40 @@ cd backend
 pytest tests/ -v
 ```
 
-You should see 19 tests pass in under a second.
+19 tests pass in under a second:
+
+```
+tests/test_api.py::test_training_load_empty PASSED
+tests/test_api.py::test_training_load_rest_days PASSED
+tests/test_api.py::test_training_load_calculation PASSED
+tests/test_api.py::test_training_load_uses_only_last_7 PASSED
+tests/test_api.py::test_scale_rest_week PASSED
+tests/test_api.py::test_scale_base_week PASSED
+tests/test_api.py::test_scale_peak_week PASSED
+tests/test_api.py::test_scale_overreach PASSED
+tests/test_api.py::test_scale_boundaries PASSED
+tests/test_api.py::test_health_endpoint PASSED
+tests/test_api.py::test_list_workouts_returns_seeded_data PASSED
+tests/test_api.py::test_add_workout PASSED
+tests/test_api.py::test_get_workout_by_id PASSED
+tests/test_api.py::test_get_workout_not_found PASSED
+tests/test_api.py::test_training_load_endpoint PASSED
+tests/test_api.py::test_scale_recommendation_endpoint PASSED
+tests/test_api.py::test_weekly_summary_returns_4_weeks PASSED
+tests/test_api.py::test_weekly_summary_has_required_fields PASSED
+tests/test_api.py::test_platform_status_endpoint PASSED
+19 passed in 0.25s
+```
 
 ---
 
 ## The Dashboard
 
-The React dashboard has three tabs:
+**Dashboard:** live KPI cards showing your current ATL score, recommended replica count, scale decision (UP / HOLD / DOWN), and four charts tracking training load, replicas, weekly volume, and intensity trends over the last 4 weeks.
 
-**Dashboard:** Live KPI cards showing your current ATL score, recommended replica count, scale decision (UP / HOLD / DOWN) and four charts tracking training load, replicas, weekly volume and intensity trends over the last 4 weeks.
+**Workouts:** your last 14 sessions with workout type, date, duration, and a live intensity bar color-coded by effort level.
 
-**Workouts:**  Your last 14 sessions with workout type, date, duration, and a live intensity bar color-coded by effort level.
-
-**Log:** Log a new workout session. As soon as you submit, the ATL recalculates and the dashboard updates in real time.
+**Log:** log a new workout session. As soon as you submit, the ATL recalculates and the dashboard updates in real time.
 
 ---
 
@@ -166,25 +202,43 @@ Full interactive docs available at `/docs` when the API is running.
 
 ## Azure Deployment
 
-**Prerequisites:** Azure CLI, PowerShell 7+, kubectl, active Azure subscription
+**Prerequisites:** Azure CLI, PowerShell 7+, kubectl, Docker Desktop, active Azure subscription
 
 ```bash
 # Login
 az login
 
-# Provision everything — AKS, ACR, Storage, Service Principal, Security Groups
-pwsh infra/scripts/provision.ps1 \
-  -Environment dev \
-  -ResourceGroupName fitops-rg-dev \
-  -SubscriptionId "your-subscription-id" \
-  -FitOpsApiUrl "https://your-deployed-api-url"
+# Create resource group
+az group create \
+  --name fitops-rg-dev \
+  --location westus3 \
+  --tags project=fitops environment=dev
+
+# Deploy Bicep infrastructure (AKS + ACR + Storage)
+az deployment group create \
+  --resource-group fitops-rg-dev \
+  --template-file infra/bicep/main.bicep \
+  --parameters environment=dev aksNodeCount=2
+
+# Build and push AMD64 images to ACR
+az acr login --name <your-acr-name>
+docker buildx build --platform linux/amd64 \
+  -t <acr-login-server>/fitops-api:latest --push ./backend
+docker buildx build --platform linux/amd64 \
+  -t <acr-login-server>/fitops-dashboard:latest --push ./frontend
+
+# Grant AKS access to ACR
+az aks update \
+  --resource-group fitops-rg-dev \
+  --name fitops-aks-dev \
+  --attach-acr <your-acr-name>
 
 # Deploy to AKS
 kubectl apply -f k8s/manifests.yaml
-kubectl get pods
+kubectl get pods --watch
 ```
 
-The provisioner queries the FitOps API for the current training load recommendation and passes that number directly into the Bicep deployment as the AKS node count. Infrastructure size is literally determined by training data.
+> **Note for Apple Silicon Macs:** Always use `--platform linux/amd64` when building images & AKS nodes run AMD64 and will fail to pull ARM64 images.
 
 **Teardown (always clean up to avoid charges):**
 ```bash
@@ -198,16 +252,16 @@ pwsh infra/scripts/teardown.ps1 \
 
 ## Azure DevOps Pipeline
 
-The pipeline has three stages that run sequentially & a broken stage stops everything downstream:
+Three stages run sequentially & a broken stage stops everything downstream:
 
 ```
 Push to main
      │
      ▼
 ┌─────────┐    fail → pipeline stops
-│  Test   │───────────────────────────►  ✘
+│  Test   │─────────────────────────► ✘
 │ pytest  │
-│ npm build│
+│npm build│
 └────┬────┘
      │ pass
      ▼
@@ -223,7 +277,7 @@ Push to main
 └──────────────────────────┘
 ```
 
-Secrets (ACR credentials, AKS connection) are stored in an Azure DevOps variable group & should never be stored in the yaml file or git history.
+Secrets are stored in an Azure DevOps variable group & never in the yaml file or git history.
 
 ---
 
@@ -237,7 +291,13 @@ Secrets (ACR credentials, AKS connection) are stored in an Azure DevOps variable
 | `adminUserEnabled: false` on ACR | Service principal auth only & no shared passwords |
 | ATL as scale signal | Proactive scaling based on known future load, not reactive CPU spikes |
 | Azure DevOps over GitHub Actions | Matches enterprise government toolchain |
-| `westus3` region | Subscription region limitations(could use others) |
+| `--platform linux/amd64` on builds | AKS nodes run AMD64 & Apple Silicon Macs must cross-compile |
 | Teardown script | Cost discipline & a core platform engineering practice |
 
+---
 
+## Author
+
+Built with ☕ and post-workout energy by Kelvin Ngabo
+
+[GitHub](https://github.com/ngab0016)
