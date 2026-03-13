@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: fitops-api
-          image: fitopsacr.azurecr.io/fitops-api:latest
+          image: fitopsacrjgoyvledgeic6.azurecr.io/fitops-api:latest
           ports:
             - containerPort: 8000
           env:
@@ -57,7 +57,7 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
-  type: ClusterIP
+  type: LoadBalancer
 
 ---
 # ── FitOps Dashboard Deployment ───────────────────────────────────────────────
@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: fitops-dashboard
-          image: fitopsacr.azurecr.io/fitops-dashboard:latest
+          image: fitopsacrjgoyvledgeic6.azurecr.io/fitops-dashboard:latest
           ports:
             - containerPort: 80
           resources:
