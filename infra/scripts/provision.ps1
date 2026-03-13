@@ -31,7 +31,7 @@ param(
     [Parameter(Mandatory)]
     [string]$SubscriptionId,
 
-    [string]$Location = "canadacentral",
+    [string]$Location = "westus3",
 
     [string]$FitOpsApiUrl = "http://localhost:8000"
 )
