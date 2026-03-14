@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-const API = import.meta.env.VITE_API_URL || "http://20.118.151.120:8000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const LOAD_COLOR = (atl) => {
   if (atl < 30) return "#22d3ee";
