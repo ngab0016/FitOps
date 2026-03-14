@@ -189,7 +189,7 @@ Write-Host "━━━━━━━━━━━━━━━━━━━━━━�
 Write-Host "  AKS Cluster:    $aksName"                        -ForegroundColor White
 Write-Host "  Node Count:     $recommendedReplicas (ATL=$trainingLoad)" -ForegroundColor White
 Write-Host "  ACR:            $acrLoginServer"                 -ForegroundColor White
-Walk-Host "  Storage:        $storageAccountName"              -ForegroundColor White
+Write-Host "  Storage:        $storageAccountName"              -ForegroundColor White
 Write-Host "  CI/CD SP:       $spName"                        -ForegroundColor White
 Write-Host "  Ops Group:      $groupName"                      -ForegroundColor White
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Cyan
