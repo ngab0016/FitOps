@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: fitops-api
-          image: fitopsacrjgoyvledgeic6.azurecr.io/fitops-api:latest
+          image: <your-acr-name>.azurecr.io/fitops-api:latest
           ports:
             - containerPort: 8000
           env:
@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: fitops-dashboard
-          image: fitopsacrjgoyvledgeic6.azurecr.io/fitops-dashboard:latest
+          image: <your-acr-name>.azurecr.io/fitops-dashboard:latest
           ports:
             - containerPort: 80
           resources:
